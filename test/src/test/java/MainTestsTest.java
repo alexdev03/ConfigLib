@@ -10,14 +10,11 @@ class MainTestsTest {
     void a() {
         YamlConfigurationProperties properties = YamlConfigurationProperties.newBuilder().build();
 
-        File folder = new File("C:\\Users\\Alessandro\\Desktop\\Programmazione\\Java\\Plugins\\ConfigLib\\configlib-core\\build\\tmp\\test");
+        File folder = new File(System.getProperty("user.dir"));
 
+        File file = new File(folder, "test.yml");
 
-        File file = new File(folder, "alex.yml");
-
-        System.out.println(file.toPath());
-
-        AlexTestConfiguration alexConfiguration = YamlConfigurations.update(file.toPath(), AlexTestConfiguration.class, properties);
+        TestConfiguration alexConfiguration = YamlConfigurations.update(file.toPath(), TestConfiguration.class, properties);
 
         System.out.println(alexConfiguration.testValue);
         System.out.println(alexConfiguration.testValue2.subTestValue().test());

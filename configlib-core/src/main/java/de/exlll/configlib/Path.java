@@ -15,7 +15,7 @@ public @interface Path {
     /**
      * Returns the custom path of the annotated configuration element.
      *
-     * @return configuration element comments
+     * @return configuration element path
      */
     String value();
 }

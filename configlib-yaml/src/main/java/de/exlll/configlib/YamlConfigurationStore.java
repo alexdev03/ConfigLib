@@ -6,6 +6,8 @@ import org.snakeyaml.engine.v2.api.Load;
 import org.snakeyaml.engine.v2.api.LoadSettings;
 import org.snakeyaml.engine.v2.common.FlowStyle;
 import org.snakeyaml.engine.v2.exceptions.YamlEngineException;
+import org.snakeyaml.engine.v2.nodes.Node;
+import org.snakeyaml.engine.v2.nodes.Tag;
 import org.snakeyaml.engine.v2.representer.StandardRepresenter;
 
 import java.io.BufferedWriter;
@@ -22,6 +24,7 @@ import static de.exlll.configlib.Validator.requireNonNull;
  *
  * @param <T> the configuration type
  */
+@SuppressWarnings("unchecked")
 public final class YamlConfigurationStore<T> implements FileConfigurationStore<T> {
     private static final Dump YAML_DUMPER = newYamlDumper();
     private static final Load YAML_LOADER = newYamlLoader();
@@ -68,7 +71,7 @@ public final class YamlConfigurationStore<T> implements FileConfigurationStore<T
     private String tryDump(T configuration) {
         final Map<?, ?> serializedConfiguration = serializer.serialize(configuration);
         try {
-            return YAML_DUMPER.dumpToString(modify((Map<String, Object>) serializedConfiguration));
+            return YAML_DUMPER.dumpToString(flattenAndSortKeys((Map<String, Object>) serializedConfiguration));
         } catch (YamlEngineException e) {
             String msg = "The given configuration could not be converted into YAML. \n" +
                     "Do all custom serializers produce valid target types?";
@@ -76,11 +79,17 @@ public final class YamlConfigurationStore<T> implements FileConfigurationStore<T
         }
     }
 
-    public Map<String, Object> modify(Map<String, Object> inputMap) {
+    /**
+     * Modifies the input map by flattening nested keys and sorting them alphabetically.
+     *
+     * @param inputMap the input map to modify
+     * @return the modified map with flattened and sorted keys
+     */
+    public Map<String, Object> flattenAndSortKeys(Map<String, Object> inputMap) {
 
-        Comparator<String> comparator = createComparator("");
+        final Comparator<String> comparator = createComparator("");
 
-        Map<String, Object> outputMap = new TreeMap<>(comparator);
+        final Map<String, Object> outputMap = new TreeMap<>(comparator);
 
         for (Map.Entry<String, Object> entry : inputMap.entrySet()) {
             String key = entry.getKey();
@@ -105,6 +114,7 @@ public final class YamlConfigurationStore<T> implements FileConfigurationStore<T
 
         return outputMap;
     }
+
     private Comparator<String> createComparator(String keys) {
         return (o1, o2) -> {
             Optional<Field> annValue1 = getFieldFromAnnotationValue(keys + "." + o1);
@@ -134,7 +144,6 @@ public final class YamlConfigurationStore<T> implements FileConfigurationStore<T
         if (map.containsKey(key) && map.get(key) instanceof Map) {
             return (Map<String, Object>) map.get(key);
         } else {
-            System.out.println(fullKey + " " + key);
             Map<String, Object> newMap = new TreeMap<>(createComparator(fullKey.replaceFirst("\\." + key, "")));
             map.put(key, newMap);
             return newMap;
@@ -156,16 +165,29 @@ public final class YamlConfigurationStore<T> implements FileConfigurationStore<T
         }
     }
 
+    /**
+     * Converts a nested map to a flat map.
+     *
+     * @param toFlat the nested map to flatten
+     * @return the flattened map
+     */
     private Map<String, Object> convert(Map<String, Object> toFlat) {
-        Map<String, Object> flatMap = new LinkedHashMap<>();
+        final Map<String, Object> flatMap = new LinkedHashMap<>();
 
         flattenMap(toFlat, "", flatMap);
 
         return flatMap;
     }
 
+    /**
+     * Converts a nested map to a flat map.
+     *
+     * @param originalMap the nested map to flatten
+     * @param currentPath the current path of the nested map (used for building the keys in the flat map)
+     * @param outputMap   the flattened map where the key-value pairs will be stored
+     */
     public static void flattenMap(Map<String, Object> originalMap, String currentPath, Map<String, Object> outputMap) {
-        String pathPrefix = currentPath.isEmpty() ? "" : currentPath + ".";
+        final String pathPrefix = currentPath.isEmpty() ? "" : currentPath + ".";
 
         for (Map.Entry<String, Object> entry : originalMap.entrySet()) {
             if (entry.getValue() instanceof Map) {
@@ -178,27 +200,35 @@ public final class YamlConfigurationStore<T> implements FileConfigurationStore<T
         }
     }
 
+    /**
+     * Finds possible configurations from the input map based on the annotations defined in the serialized class.
+     *
+     * @param input the input map containing the configuration values
+     * @return a map of possible configurations extracted from the input map
+     */
     private Map<String, Object> findPossibles(Map<String, Object> input) {
-        Class<?> clazz = serializer.getType();
+        final Class<?> clazz = serializer.getType();
 
-        List<Field> fields = Arrays.stream(clazz.getDeclaredFields())
+        final List<Field> fields = Arrays.stream(clazz.getDeclaredFields())
                 .filter(f -> f.isAnnotationPresent(de.exlll.configlib.Path.class))
                 .toList();
 
-        Map<String, Object> flatMap = new LinkedHashMap<>();
+        final Map<String, Object> flatMap = new LinkedHashMap<>();
 
         for (Field field : fields) {
+
+            final String annotationValue = field.getAnnotation(de.exlll.configlib.Path.class).value();
+
             for (String key : input.keySet()) {
 
-                String annotationValue = field.getAnnotation(de.exlll.configlib.Path.class).value();
 
                 if (key.startsWith(annotationValue)
                         && key.replace(annotationValue, "").startsWith(".")
                 ) {
 
-                    String finalKey = key.replace(annotationValue, "").replaceFirst("\\.", "");
+                    final String finalKey = key.replace(annotationValue, "").replaceFirst("\\.", "");
 
-                    Map<String, Object> nestedMap = (Map<String, Object>) flatMap.getOrDefault(annotationValue, new LinkedHashMap<>());
+                    final Map<String, Object> nestedMap = (Map<String, Object>) flatMap.getOrDefault(annotationValue, new LinkedHashMap<>());
 
                     fixValue(nestedMap, finalKey, key, input);
 
@@ -213,11 +243,19 @@ public final class YamlConfigurationStore<T> implements FileConfigurationStore<T
         return flatMap;
     }
 
+    /**
+     * Fixes the value in the nested map by traversing through the input map and updating the corresponding keys.
+     *
+     * @param nested      the nested map to update
+     * @param key         the current key to be updated
+     * @param completeKey the complete key of the current value in the input map
+     * @param input       the input map containing the values
+     */
     private void fixValue(Map<String, Object> nested, String key, String completeKey, Map<String, Object> input) {
-        Object element = input.get(completeKey);
+        final Object element = input.get(completeKey);
 
         if (element instanceof Map) {
-            Map<String, Object> map = (Map<String, Object>) element;
+            final Map<String, Object> map = (Map<String, Object>) element;
             for (String mapKey : map.keySet()) {
                 fixValue(nested, mapKey, completeKey + "." + mapKey, input);
             }
@@ -226,19 +264,14 @@ public final class YamlConfigurationStore<T> implements FileConfigurationStore<T
         } else {
 
             if (key.contains(".")) {
-                String[] keys = key.split("\\.", 2);
-
-                String firstKey = keys[0];
-                String secondKey = keys[1];
-
-
-                Map<String, Object> nestedMap = (Map<String, Object>) nested.getOrDefault(firstKey, new LinkedHashMap<>());
+                final String[] keys = key.split("\\.", 2);
+                final String firstKey = keys[0];
+                final String secondKey = keys[1];
+                final Map<String, Object> nestedMap = (Map<String, Object>) nested.getOrDefault(firstKey, new LinkedHashMap<>());
 
                 nested.put(firstKey, nestedMap);
 
                 fixValue(nestedMap, secondKey, completeKey, input);
-
-
             } else {
                 nested.put(key, element);
             }
@@ -424,19 +457,18 @@ public final class YamlConfigurationStore<T> implements FileConfigurationStore<T
             super(settings);
         }
 
-//        @Override
-//        protected Node representSequence(Tag tag, Iterable<?> sequence, FlowStyle flowStyle) {
-//            Node node = super.representSequence(tag, sequence, flowStyle);
-//            representedObjects.clear();
-//            return node;
-//        }
-//
-//        @Override
-//        protected Node representMapping(Tag tag, Map<?, ?> mapping, FlowStyle flowStyle) {
-//            Node node = super.representMapping(tag, mapping, flowStyle);
-//            representedObjects.clear();
-//            System.out.println(tag + " " + mapping + " " + flowStyle);
-//            return node;
-//        }
+        @Override
+        protected Node representSequence(Tag tag, Iterable<?> sequence, FlowStyle flowStyle) {
+            Node node = super.representSequence(tag, sequence, flowStyle);
+            representedObjects.clear();
+            return node;
+        }
+
+        @Override
+        protected Node representMapping(Tag tag, Map<?, ?> mapping, FlowStyle flowStyle) {
+            Node node = super.representMapping(tag, mapping, flowStyle);
+            representedObjects.clear();
+            return node;
+        }
     }
 }
