@@ -22,6 +22,12 @@ import java.util.UUID;
 @SuppressWarnings({"FieldCanBeLocal", "FieldMayBeFinal"})
 @Configuration
 public class ExampleConfigurationA1 {
+
+    static {
+        System.out.println(1);
+    }
+
+
     /* IGNORED FIELDS */
     private static final int a1_staticFinalInt = 1;
     private static int a1_staticInt = 2;

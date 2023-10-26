@@ -1,5 +1,6 @@
 package de.exlll.configlib;
 
+import java.lang.reflect.Field;
 import java.util.function.Function;
 
 /**
@@ -15,6 +16,10 @@ public interface NameFormatter extends Function<String, String> {
      * @throws NullPointerException if {@code name} is null
      */
     String format(String name);
+
+    default String format(Field field) {
+        return format(field.getName());
+    }
 
     /**
      * Formats the name of a configuration element.

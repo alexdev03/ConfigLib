@@ -72,4 +72,12 @@ public interface ConfigurationElement<T extends AnnotatedElement>
     default <A extends Annotation> A annotation(Class<A> annotationType) {
         return element().getAnnotation(annotationType);
     }
+
+    default boolean hasCustomPath() {
+        return annotation(Path.class) != null;
+    }
+
+    default String customPath() {
+        return annotation(Path.class).value();
+    }
 }

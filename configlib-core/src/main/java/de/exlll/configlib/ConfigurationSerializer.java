@@ -16,7 +16,7 @@ final class ConfigurationSerializer<T> extends TypeSerializer<T, FieldElement> {
         final T result = Reflect.callNoParamConstructor(type);
 
         for (final var element : elements()) {
-            final var formattedName = formatter.format(element.name());
+            final var formattedName = element.hasCustomPath() ? element.customPath() : formatter.format(element.name());
 
             if (!serializedConfiguration.containsKey(formattedName))
                 continue;
@@ -40,7 +40,7 @@ final class ConfigurationSerializer<T> extends TypeSerializer<T, FieldElement> {
     protected void requireSerializableElements() {
         if (serializers.isEmpty()) {
             String msg = "Configuration class '" + type.getSimpleName() + "' " +
-                         "does not contain any (de-)serializable fields.";
+                    "does not contain any (de-)serializable fields.";
             throw new ConfigurationException(msg);
         }
     }
@@ -67,7 +67,7 @@ final class ConfigurationSerializer<T> extends TypeSerializer<T, FieldElement> {
     private static void requireNonPrimitiveFieldType(Field field) {
         if (field.getType().isPrimitive()) {
             String msg = ("Cannot set field '%s' to null value. Primitive types " +
-                          "cannot be assigned null.").formatted(field);
+                    "cannot be assigned null.").formatted(field);
             throw new ConfigurationException(msg);
         }
     }

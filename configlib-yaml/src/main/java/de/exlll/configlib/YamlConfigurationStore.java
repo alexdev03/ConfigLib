@@ -6,18 +6,14 @@ import org.snakeyaml.engine.v2.api.Load;
 import org.snakeyaml.engine.v2.api.LoadSettings;
 import org.snakeyaml.engine.v2.common.FlowStyle;
 import org.snakeyaml.engine.v2.exceptions.YamlEngineException;
-import org.snakeyaml.engine.v2.nodes.Node;
-import org.snakeyaml.engine.v2.nodes.Tag;
 import org.snakeyaml.engine.v2.representer.StandardRepresenter;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.Queue;
+import java.util.*;
 
 import static de.exlll.configlib.Validator.requireNonNull;
 
@@ -72,11 +68,76 @@ public final class YamlConfigurationStore<T> implements FileConfigurationStore<T
     private String tryDump(T configuration) {
         final Map<?, ?> serializedConfiguration = serializer.serialize(configuration);
         try {
-            return YAML_DUMPER.dumpToString(serializedConfiguration);
+            return YAML_DUMPER.dumpToString(modify((Map<String, Object>) serializedConfiguration));
         } catch (YamlEngineException e) {
             String msg = "The given configuration could not be converted into YAML. \n" +
-                         "Do all custom serializers produce valid target types?";
+                    "Do all custom serializers produce valid target types?";
             throw new ConfigurationException(msg, e);
+        }
+    }
+
+    public Map<String, Object> modify(Map<String, Object> inputMap) {
+
+        Comparator<String> comparator = createComparator("");
+
+        Map<String, Object> outputMap = new TreeMap<>(comparator);
+
+        for (Map.Entry<String, Object> entry : inputMap.entrySet()) {
+            String key = entry.getKey();
+            Object value = entry.getValue();
+
+            if (key.contains(".")) {
+                String[] keys = key.split("\\.");
+
+                Map<String, Object> nestedMap = outputMap;
+
+                for (int i = 0; i < keys.length - 1; i++) {
+                    String subKey = keys[i];
+                    nestedMap = getOrCreateNestedMap(nestedMap, subKey, key);
+                }
+
+                nestedMap.put(keys[keys.length - 1], value);
+            } else {
+                outputMap.put(key, value);
+            }
+        }
+
+
+        return outputMap;
+    }
+    private Comparator<String> createComparator(String keys) {
+        return (o1, o2) -> {
+            Optional<Field> annValue1 = getFieldFromAnnotationValue(keys + "." + o1);
+            Optional<Field> annValue2 = getFieldFromAnnotationValue(keys + "." + o2);
+
+
+            if (annValue1.isEmpty() && annValue2.isEmpty()) {
+                return o1.compareTo(o2);
+            } else {
+                return annValue1.map(value -> annValue2.map(field -> Integer.compare(getIndex(value), getIndex(field))).orElse(-1)).orElse(1);
+            }
+        };
+    }
+
+    private int getIndex(Field field) {
+        return List.of(serializer.getType().getDeclaredFields()).indexOf(field);
+    }
+
+    private Optional<Field> getFieldFromAnnotationValue(String annotationValue) {
+        return Arrays.stream(serializer.getType().getDeclaredFields())
+                .filter(f -> f.isAnnotationPresent(de.exlll.configlib.Path.class))
+                .filter(f -> f.getAnnotation(de.exlll.configlib.Path.class).value().equals(annotationValue))
+                .findFirst();
+    }
+
+    private Map<String, Object> getOrCreateNestedMap(Map<String, Object> map, String key, String fullKey) {
+        if (map.containsKey(key) && map.get(key) instanceof Map) {
+            return (Map<String, Object>) map.get(key);
+        } else {
+            System.out.println(fullKey + " " + key);
+            Map<String, Object> newMap = new TreeMap<>(createComparator(fullKey.replaceFirst("\\." + key, "")));
+            map.put(key, newMap);
+            return newMap;
         }
     }
 
@@ -86,12 +147,102 @@ public final class YamlConfigurationStore<T> implements FileConfigurationStore<T
         try (var reader = Files.newBufferedReader(configurationFile)) {
             var yaml = YAML_LOADER.loadFromReader(reader);
             var conf = requireYamlMap(yaml, configurationFile);
-            return serializer.deserialize(conf);
+            return serializer.deserialize(findPossibles(convert((Map<String, Object>) conf)));
         } catch (YamlEngineException e) {
             String msg = "The configuration file at %s does not contain valid YAML.";
             throw new ConfigurationException(msg.formatted(configurationFile), e);
         } catch (IOException e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    private Map<String, Object> convert(Map<String, Object> toFlat) {
+        Map<String, Object> flatMap = new LinkedHashMap<>();
+
+        flattenMap(toFlat, "", flatMap);
+
+        return flatMap;
+    }
+
+    public static void flattenMap(Map<String, Object> originalMap, String currentPath, Map<String, Object> outputMap) {
+        String pathPrefix = currentPath.isEmpty() ? "" : currentPath + ".";
+
+        for (Map.Entry<String, Object> entry : originalMap.entrySet()) {
+            if (entry.getValue() instanceof Map) {
+                // If the value is a nested map, recursively call this function
+                flattenMap((Map<String, Object>) entry.getValue(), pathPrefix + entry.getKey(), outputMap);
+            } else {
+                // Otherwise, put the value into the output map with the fully built path as the key
+                outputMap.put(pathPrefix + entry.getKey(), entry.getValue());
+            }
+        }
+    }
+
+    private Map<String, Object> findPossibles(Map<String, Object> input) {
+        Class<?> clazz = serializer.getType();
+
+        List<Field> fields = Arrays.stream(clazz.getDeclaredFields())
+                .filter(f -> f.isAnnotationPresent(de.exlll.configlib.Path.class))
+                .toList();
+
+        Map<String, Object> flatMap = new LinkedHashMap<>();
+
+        for (Field field : fields) {
+            for (String key : input.keySet()) {
+
+                String annotationValue = field.getAnnotation(de.exlll.configlib.Path.class).value();
+
+                if (key.startsWith(annotationValue)
+                        && key.replace(annotationValue, "").startsWith(".")
+                ) {
+
+                    String finalKey = key.replace(annotationValue, "").replaceFirst("\\.", "");
+
+                    Map<String, Object> nestedMap = (Map<String, Object>) flatMap.getOrDefault(annotationValue, new LinkedHashMap<>());
+
+                    fixValue(nestedMap, finalKey, key, input);
+
+                    flatMap.put(annotationValue, nestedMap);
+
+                } else if (key.equals(annotationValue)) {
+                    flatMap.put(annotationValue, input.get(key));
+                }
+            }
+        }
+
+        return flatMap;
+    }
+
+    private void fixValue(Map<String, Object> nested, String key, String completeKey, Map<String, Object> input) {
+        Object element = input.get(completeKey);
+
+        if (element instanceof Map) {
+            Map<String, Object> map = (Map<String, Object>) element;
+            for (String mapKey : map.keySet()) {
+                fixValue(nested, mapKey, completeKey + "." + mapKey, input);
+            }
+
+            nested.put(key, map);
+        } else {
+
+            if (key.contains(".")) {
+                String[] keys = key.split("\\.", 2);
+
+                String firstKey = keys[0];
+                String secondKey = keys[1];
+
+
+                Map<String, Object> nestedMap = (Map<String, Object>) nested.getOrDefault(firstKey, new LinkedHashMap<>());
+
+                nested.put(firstKey, nestedMap);
+
+                fixValue(nestedMap, secondKey, completeKey, input);
+
+
+            } else {
+                nested.put(key, element);
+            }
+
         }
     }
 
@@ -103,8 +254,8 @@ public final class YamlConfigurationStore<T> implements FileConfigurationStore<T
 
         if (!(yaml instanceof Map<?, ?>)) {
             String msg = "The contents of the YAML file at %s do not represent a configuration. " +
-                         "A valid configuration file contains a YAML map but instead a " +
-                         "'" + yaml.getClass() + "' was found.";
+                    "A valid configuration file contains a YAML map but instead a " +
+                    "'" + yaml.getClass() + "' was found.";
             throw new ConfigurationException(msg.formatted(configurationFile));
         }
 
@@ -133,7 +284,7 @@ public final class YamlConfigurationStore<T> implements FileConfigurationStore<T
     }
 
     static Load newYamlLoader() {
-        LoadSettings settings = LoadSettings.builder().build();
+        LoadSettings settings = LoadSettings.builder().setAllowRecursiveKeys(true).build();
         return new Load(settings);
     }
 
@@ -273,18 +424,19 @@ public final class YamlConfigurationStore<T> implements FileConfigurationStore<T
             super(settings);
         }
 
-        @Override
-        protected Node representSequence(Tag tag, Iterable<?> sequence, FlowStyle flowStyle) {
-            Node node = super.representSequence(tag, sequence, flowStyle);
-            representedObjects.clear();
-            return node;
-        }
-
-        @Override
-        protected Node representMapping(Tag tag, Map<?, ?> mapping, FlowStyle flowStyle) {
-            Node node = super.representMapping(tag, mapping, flowStyle);
-            representedObjects.clear();
-            return node;
-        }
+//        @Override
+//        protected Node representSequence(Tag tag, Iterable<?> sequence, FlowStyle flowStyle) {
+//            Node node = super.representSequence(tag, sequence, flowStyle);
+//            representedObjects.clear();
+//            return node;
+//        }
+//
+//        @Override
+//        protected Node representMapping(Tag tag, Map<?, ?> mapping, FlowStyle flowStyle) {
+//            Node node = super.representMapping(tag, mapping, flowStyle);
+//            representedObjects.clear();
+//            System.out.println(tag + " " + mapping + " " + flowStyle);
+//            return node;
+//        }
     }
 }

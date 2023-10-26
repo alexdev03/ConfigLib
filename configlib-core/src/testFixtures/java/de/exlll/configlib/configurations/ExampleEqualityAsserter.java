@@ -22,6 +22,10 @@ public final class ExampleEqualityAsserter {
         assertExampleConfigurationsB1Equal(expected.b1(), actual.b1());
     }
 
+    public void test() {
+
+    }
+
     public static void assertExampleRecord2Equal(
             ExampleRecord2 expected,
             ExampleRecord2 actual

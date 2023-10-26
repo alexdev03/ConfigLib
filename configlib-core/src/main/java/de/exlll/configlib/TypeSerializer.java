@@ -55,7 +55,8 @@ abstract class TypeSerializer<T, E extends ConfigurationElement<?>>
                 continue;
 
             final Object serializedValue = serialize(element, elementValue);
-            final String formattedName = formatter.format(element.name());
+//            final String formattedName = formatter.format(element.name());
+            final String formattedName = element.hasCustomPath() ? element.customPath() : formatter.format(element.name());
             result.put(formattedName, serializedValue);
         }
 
@@ -100,4 +101,8 @@ abstract class TypeSerializer<T, E extends ConfigurationElement<?>>
     protected abstract List<E> elements();
 
     abstract T newDefaultInstance();
+
+    public Class<T> getType() {
+        return type;
+    }
 }

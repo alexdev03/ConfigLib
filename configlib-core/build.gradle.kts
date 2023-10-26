@@ -1,3 +1,4 @@
 plugins {
     `core-config`
 }
+
